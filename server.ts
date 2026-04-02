@@ -250,8 +250,8 @@ function normalize(camera: any): Camera {
   return {
     id: (camera.id || camera.camera_id || Math.random().toString()).toString(),
     name: camera.name || camera.description || "Unknown Camera",
-    lat: Number(camera.latitude || camera.lat || 0),
-    lng: Number(camera.longitude || camera.lon || camera.lng || 0),
+    lat: Number(camera.latitude || camera.lat || camera.location?.lat || 0),
+    lng: Number(camera.longitude || camera.lon || camera.lng || camera.location?.lon || 0),
     image: camera.imageUrl ? (camera.imageUrl.startsWith('http') ? camera.imageUrl : `https://trafficnz.info${camera.imageUrl}`) : "https://trafficnz.info/camera/default.jpg",
     viewUrl: camera.viewUrl ? (camera.viewUrl.startsWith('http') ? camera.viewUrl : `https://trafficnz.info${camera.viewUrl}`) : "https://www.nzta.govt.nz/",
     region: camera.region?.name || camera.region || "Unknown",
@@ -285,8 +285,8 @@ function normalizeIncident(event: any): any {
     severity: severity,
     status: status,
     description: event.description || event.summary || "No description provided.",
-    lat: Number(event.latitude || event.lat || 0),
-    lng: Number(event.longitude || event.lon || event.lng || 0),
+    lat: Number(event.latitude || event.lat || event.location?.lat || 0),
+    lng: Number(event.longitude || event.lon || event.lng || event.location?.lon || 0),
     startTime: event.startDate || event.start_date || new Date().toISOString(),
     updatedTime: event.lastModifiedDate || event.updated_date || new Date().toISOString(),
   };
@@ -320,9 +320,12 @@ async function doFetch(): Promise<Camera[]> {
 
   try {
     const urls = [
+      "https://www.nzta.govt.nz/service/traffic/rest/6/cameras/all?format=json",
+      "https://www.nzta.govt.nz/service/traffic/rest/5/cameras/all?format=json",
       "https://www.nzta.govt.nz/service/traffic/rest/4/cameras/all?format=json",
-      "https://trafficnz.info/service/traffic/rest/4/cameras/all?format=json",
-      "https://www.nzta.govt.nz/service/traffic/rest/1/cameras/all?format=json"
+      "https://www.nzta.govt.nz/assets/traffic/cameras.json",
+      "https://trafficnz.info/service/traffic/rest/6/cameras/all?format=json",
+      "https://trafficnz.info/service/traffic/rest/4/cameras/all?format=json"
     ];
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
@@ -378,9 +381,13 @@ async function fetchIncidents(): Promise<any[]> {
   if (incidentCache.length > 0 && now - lastIncidentFetch < TTL) return incidentCache;
   
   const urls = [
+    "https://www.nzta.govt.nz/service/traffic/rest/6/events/all?format=json",
+    "https://www.nzta.govt.nz/service/traffic/rest/5/events/all?format=json",
     "https://www.nzta.govt.nz/service/traffic/rest/4/events/all?format=json",
-    "https://trafficnz.info/service/traffic/rest/4/events/all?format=json",
-    "https://www.nzta.govt.nz/service/traffic/rest/1/events/all?format=json"
+    "https://www.nzta.govt.nz/assets/traffic/events.json",
+    "https://www.nzta.govt.nz/service/traffic/rest/events/all?format=json",
+    "https://trafficnz.info/service/traffic/rest/6/events/all?format=json",
+    "https://trafficnz.info/service/traffic/rest/4/events/all?format=json"
   ];
 
   for (const url of urls) {
@@ -391,7 +398,8 @@ async function fetchIncidents(): Promise<any[]> {
       const res = await fetch(url, {
         headers: { 
           'Accept': 'application/json',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Referer': 'https://www.nzta.govt.nz/'
         },
         signal: controller.signal
       });
