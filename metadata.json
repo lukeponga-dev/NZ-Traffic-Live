@@ -1,0 +1,7 @@
+{
+  "name": "Remix: NZ Traffic Live",
+  "description": "Real-time traffic cameras and incidents map for New Zealand. Installable PWA with offline support.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}

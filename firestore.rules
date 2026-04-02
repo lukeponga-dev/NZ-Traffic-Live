@@ -1,0 +1,106 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: incidents
+    // Fields: id, type, severity, description, lat, lng, startTime, updatedTime
+    //
+    // Collection: userReports
+    // Fields: id, userId, type, description, lat, lng, timestamp, status
+    //
+    // Collection: users
+    // Fields: uid, displayName, email, photoURL, role
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "developmentdesignsltd@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidDateString(dateStr) {
+      return dateStr is string && dateStr.matches("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}.*Z?$");
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidIncident(data) {
+      return hasRequiredFields(['id', 'type', 'severity', 'description', 'lat', 'lng', 'startTime', 'updatedTime']) &&
+             data.id is string && data.type is string &&
+             data.severity in ['Minor', 'Moderate', 'Severe'] &&
+             data.description is string && data.description.size() < 2000 &&
+             data.lat is number && data.lng is number &&
+             isValidDateString(data.startTime) && isValidDateString(data.updatedTime);
+    }
+
+    function isValidUserReport(data) {
+      return hasRequiredFields(['id', 'userId', 'type', 'description', 'lat', 'lng', 'timestamp', 'status']) &&
+             data.id is string && data.userId == request.auth.uid &&
+             data.type is string && data.description is string && data.description.size() < 1000 &&
+             data.lat is number && data.lng is number &&
+             isValidDateString(data.timestamp) &&
+             data.status in ['pending', 'verified', 'resolved'];
+    }
+
+    function isValidUser(data) {
+      return hasRequiredFields(['uid', 'displayName', 'email', 'role']) &&
+             data.uid == request.auth.uid &&
+             data.displayName is string && data.displayName.size() > 0 && data.displayName.size() < 100 &&
+             isValidEmail(data.email) &&
+             data.role in ['user', 'admin'];
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
+
+    match /incidents/{incidentId} {
+      allow read: if true; // Publicly readable traffic info
+      allow write: if isAdmin();
+    }
+
+    match /userReports/{reportId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidUserReport(request.resource.data);
+      allow update: if isAdmin() || (isOwner(resource.data.userId) && request.resource.data.status == resource.data.status);
+      allow delete: if isAdmin();
+    }
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.role == 'user';
+      allow update: if isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.role == resource.data.role;
+      allow delete: if isAdmin();
+    }
+  }
+}
