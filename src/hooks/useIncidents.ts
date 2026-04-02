@@ -44,7 +44,10 @@ export function useIncidents() {
       setLastUpdated(new Date());
     } catch (e) {
       console.error("Failed to load traffic incidents:", e);
-      setError("Failed to load traffic incident data. Please try again later.");
+      // If we already have incidents, don't show a blocking error
+      if (incidents.length === 0) {
+        setError("Failed to load traffic incident data. Please try again later.");
+      }
     } finally {
       setLoading(false);
     }

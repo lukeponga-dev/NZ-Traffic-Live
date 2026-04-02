@@ -80,17 +80,18 @@ const mockIncidents: Incident[] = [
 ];
 
 export async function fetchIncidents(lat?: number, lng?: number, radiusKm: number = 500): Promise<Incident[]> {
-  const path = 'incidents';
   try {
-    const q = query(collection(db, path));
-    const querySnapshot = await getDocs(q);
-    let incidents = querySnapshot.docs.map(doc => doc.data() as Incident);
+    const url = new URL("/api/incidents", window.location.origin);
+    const res = await fetch(url.toString());
+    
+    if (!res.ok) {
+      throw new Error(`API Error: ${res.status}`);
+    }
 
-    // If no incidents in DB, seed with mock data (only if admin/dev)
-    if (incidents.length === 0) {
-      console.log("No incidents found in Firestore, seeding mock data...");
-      // In a real app, this would be a backend task or admin-only
-      // For this demo, we'll return mock data but not seed automatically to avoid permission issues
+    const json = await res.json();
+    let incidents = json.data as Incident[];
+
+    if (!Array.isArray(incidents)) {
       return mockIncidents;
     }
 
@@ -113,8 +114,8 @@ export async function fetchIncidents(lat?: number, lng?: number, radiusKm: numbe
       return distance <= radiusKm;
     });
   } catch (error) {
-    handleFirestoreError(error, OperationType.LIST, path);
-    return [];
+    console.error("Failed to fetch NZTA incidents, falling back to mock data:", error);
+    return mockIncidents;
   }
 }
 

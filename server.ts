@@ -225,20 +225,6 @@ const FALLBACK_CAMERAS: Camera[] = [
   }
 ];
 
-function normalize(camera: any): Camera {
-  return {
-    id: camera.id.toString(),
-    name: camera.name,
-    lat: camera.latitude,
-    lng: camera.longitude,
-    image: `https://trafficnz.info${camera.imageUrl}`,
-    viewUrl: `https://trafficnz.info${camera.viewUrl}`,
-    region: camera.region?.name || "Unknown",
-    description: camera.description || "",
-    offline: !!camera.offline,
-  };
-}
-
 function haversine(
   lat1: number,
   lng1: number,
@@ -260,120 +246,188 @@ function haversine(
   return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+function normalize(camera: any): Camera {
+  return {
+    id: (camera.id || camera.camera_id || Math.random().toString()).toString(),
+    name: camera.name || camera.description || "Unknown Camera",
+    lat: Number(camera.latitude || camera.lat || 0),
+    lng: Number(camera.longitude || camera.lon || camera.lng || 0),
+    image: camera.imageUrl ? (camera.imageUrl.startsWith('http') ? camera.imageUrl : `https://trafficnz.info${camera.imageUrl}`) : "https://trafficnz.info/camera/default.jpg",
+    viewUrl: camera.viewUrl ? (camera.viewUrl.startsWith('http') ? camera.viewUrl : `https://trafficnz.info${camera.viewUrl}`) : "https://www.nzta.govt.nz/",
+    region: camera.region?.name || camera.region || "Unknown",
+    description: camera.description || "",
+    offline: !!camera.offline,
+  };
+}
+
+function normalizeIncident(event: any): any {
+  // Map NZTA severity to our IncidentSeverity
+  let severity: string = "Minor";
+  const nztaSeverity = (event.severity || "").toLowerCase();
+  if (nztaSeverity.includes("high") || nztaSeverity.includes("severe") || nztaSeverity.includes("major")) {
+    severity = "Severe";
+  } else if (nztaSeverity.includes("moderate") || nztaSeverity.includes("medium")) {
+    severity = "Moderate";
+  }
+
+  // Map NZTA status
+  let status: string = "Active";
+  const nztaStatus = (event.status || "").toLowerCase();
+  if (nztaStatus.includes("resolved") || nztaStatus.includes("cleared")) {
+    status = "Resolved";
+  } else if (nztaStatus.includes("planned") || nztaStatus.includes("future")) {
+    status = "Planned";
+  }
+
+  return {
+    id: (event.id || event.event_id || Math.random().toString()).toString(),
+    type: event.eventType || event.type || "Other",
+    severity: severity,
+    status: status,
+    description: event.description || event.summary || "No description provided.",
+    lat: Number(event.latitude || event.lat || 0),
+    lng: Number(event.longitude || event.lon || event.lng || 0),
+    startTime: event.startDate || event.start_date || new Date().toISOString(),
+    updatedTime: event.lastModifiedDate || event.updated_date || new Date().toISOString(),
+  };
+}
+
 let isFetching = false;
+let incidentCache: any[] = [];
+let lastIncidentFetch = 0;
 
 async function fetchCameras(): Promise<Camera[]> {
   const now = Date.now();
-
-  // If we have a cache and it's fresh enough, return it immediately
-  if (cache.length > 0 && now - lastFetch < TTL) {
-    return cache;
-  }
-
-  // If we're already fetching, return the current cache (even if stale) to avoid blocking
-  if (isFetching && cache.length > 0) {
-    return cache;
-  }
-
-  // If cache is empty, return fallback immediately and fetch in background
-  // This ensures the UI never hangs on first load
+  if (cache.length > 0 && now - lastFetch < TTL) return cache;
+  if (isFetching && cache.length > 0) return cache;
   if (cache.length === 0) {
     cache = FALLBACK_CAMERAS;
     doFetch().catch(err => console.error("Initial background fetch failed:", err));
     return cache;
   }
-
-  // If cache is stale but not empty, trigger a background fetch and return stale cache
   if (now - lastFetch >= TTL) {
     doFetch().catch(err => console.error("Background fetch failed:", err));
-    return cache;
   }
-
   return cache;
 }
 
 async function doFetch(): Promise<Camera[]> {
   if (isFetching) return cache;
   isFetching = true;
-
   const now = Date.now();
-  const MAX_RETRIES = 5; 
-  const TIMEOUT_MS = 20000; // Increased to 20 seconds for better reliability
+  const MAX_RETRIES = 3; 
+  const TIMEOUT_MS = 15000;
 
   try {
+    const urls = [
+      "https://www.nzta.govt.nz/service/traffic/rest/4/cameras/all?format=json",
+      "https://trafficnz.info/service/traffic/rest/4/cameras/all?format=json",
+      "https://www.nzta.govt.nz/service/traffic/rest/1/cameras/all?format=json"
+    ];
+
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
+      for (const url of urls) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
-      try {
-        // Official NZTA URL is usually more stable than community proxies
-        const primaryUrl = "https://www.nzta.govt.nz/service/traffic/rest/4/cameras/all?format=json";
-        const secondaryUrl = "https://trafficnz.info/service/traffic/rest/4/cameras/all?format=json";
-        
-        const url = attempt % 2 === 1 ? primaryUrl : secondaryUrl;
-        
-        const res = await fetch(url, {
-          headers: { 
-            'Accept': 'application/json',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-          },
-          signal: controller.signal
-        });
-        
-        clearTimeout(timeoutId);
+        try {
+          console.log(`Attempting to fetch cameras from ${url} (attempt ${attempt})`);
+          const res = await fetch(url, {
+            headers: { 
+              'Accept': 'application/json',
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            },
+            signal: controller.signal
+          });
+          clearTimeout(timeoutId);
 
-        if (!res.ok) {
-          console.error(`NZTA fetch failed (attempt ${attempt}) from ${url}: Status ${res.status} ${res.statusText}`);
-          continue;
-        }
+          if (!res.ok) continue;
 
-        const text = await res.text();
-        if (!text.trim().startsWith('{')) {
-          console.error(`Received non-JSON response from ${url} (attempt ${attempt}). Response snippet: ${text.substring(0, 100)}...`);
-          continue;
-        }
+          const text = await res.text();
+          if (!text.trim().startsWith('{')) continue;
 
-        const data = JSON.parse(text);
-        
-        if (!data || !data.response || !Array.isArray(data.response.camera)) {
-          console.error(`Invalid data structure from API (attempt ${attempt}) from ${url}`);
-          continue;
-        }
+          const data = JSON.parse(text);
+          const rawCameras = data.response?.camera || data.cameras || data;
+          
+          if (!Array.isArray(rawCameras)) continue;
 
-        const newCameras = data.response.camera.map((c: any) => {
-          try {
-            return normalize(c);
-          } catch (e) {
-            return null;
+          const newCameras = rawCameras.map((c: any) => {
+            try { return normalize(c); } catch (e) { return null; }
+          }).filter((c: any) => c !== null && c.lat !== 0);
+
+          if (newCameras.length > 0) {
+            cache = newCameras;
+            lastFetch = now;
+            console.log(`Successfully fetched ${cache.length} cameras from ${url}`);
+            return cache;
           }
-        }).filter((c: any) => c !== null);
-
-        if (newCameras.length > 0) {
-          cache = newCameras;
-          lastFetch = now;
-          console.log(`Successfully fetched ${cache.length} cameras from ${url}`);
-          return cache;
-        }
-      } catch (err: any) {
-        clearTimeout(timeoutId);
-        const errorMessage = err.name === 'AbortError' ? 'Timeout' : (err.message || err);
-        console.error(`Error in fetchCameras (attempt ${attempt}):`, errorMessage);
-        
-        if (attempt < MAX_RETRIES) {
-          await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+        } catch (err: any) {
+          clearTimeout(timeoutId);
         }
       }
-    }
-
-    if (cache.length === 0) {
-      console.warn("Using fallback cameras due to API failure after all attempts");
-      cache = FALLBACK_CAMERAS;
-      lastFetch = now;
+      if (attempt < MAX_RETRIES) await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
     }
     return cache;
   } finally {
     isFetching = false;
   }
+}
+
+async function fetchIncidents(): Promise<any[]> {
+  const now = Date.now();
+  if (incidentCache.length > 0 && now - lastIncidentFetch < TTL) return incidentCache;
+  
+  const urls = [
+    "https://www.nzta.govt.nz/service/traffic/rest/4/events/all?format=json",
+    "https://trafficnz.info/service/traffic/rest/4/events/all?format=json",
+    "https://www.nzta.govt.nz/service/traffic/rest/1/events/all?format=json"
+  ];
+
+  for (const url of urls) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    try {
+      console.log(`Attempting to fetch incidents from ${url}`);
+      const res = await fetch(url, {
+        headers: { 
+          'Accept': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        },
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      if (!res.ok) {
+        console.warn(`NZTA incident fetch failed from ${url}: Status ${res.status}`);
+        continue;
+      }
+      const text = await res.text();
+      if (!text.trim().startsWith('{')) {
+        console.warn(`Received non-JSON incident response from ${url}`);
+        continue;
+      }
+      const data = JSON.parse(text);
+      const rawEvents = data.response?.event || data.events || data.data || data;
+      if (!Array.isArray(rawEvents)) {
+        console.warn(`Invalid incident data structure from ${url}`);
+        continue;
+      }
+
+      const newIncidents = rawEvents.map((e: any) => {
+        try { return normalizeIncident(e); } catch (e) { return null; }
+      }).filter((e: any) => e !== null && e.lat !== 0);
+
+      if (newIncidents.length > 0) {
+        incidentCache = newIncidents;
+        lastIncidentFetch = now;
+        console.log(`Successfully fetched ${incidentCache.length} incidents from ${url}`);
+        return incidentCache;
+      }
+    } catch (err: any) {
+      clearTimeout(timeoutId);
+      console.error(`Error fetching incidents from ${url}:`, err.message || err);
+    }
+  }
+  return incidentCache;
 }
 
 async function startServer() {
@@ -382,14 +436,22 @@ async function startServer() {
   const PORT = 3000;
 
   app.get("/api/cameras", async (_: Request, res: Response) => {
-    console.log("Received request for /api/cameras");
     try {
       const cameras = await fetchCameras();
-      console.log("Successfully fetched cameras, count:", cameras.length);
       res.json({ count: cameras.length, data: cameras });
     } catch (err) {
-      console.error("Error in /api/cameras:", err);
-      res.status(500).json({ error: "Failed to fetch cameras" });
+      console.error("Critical error in /api/cameras:", err);
+      res.json({ count: cache.length, data: cache, error: "Partial data load" });
+    }
+  });
+
+  app.get("/api/incidents", async (_: Request, res: Response) => {
+    try {
+      const incidents = await fetchIncidents();
+      res.json({ count: incidents.length, data: incidents });
+    } catch (err) {
+      console.error("Critical error in /api/incidents:", err);
+      res.json({ count: incidentCache.length, data: incidentCache, error: "Partial data load" });
     }
   });
 

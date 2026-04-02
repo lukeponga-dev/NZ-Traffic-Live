@@ -18,7 +18,10 @@ export function useTrafficData() {
       setLastUpdated(new Date());
     } catch (e) {
       console.error("Failed to load traffic cameras:", e);
-      setError("Failed to load traffic camera data. Please try again later.");
+      // If we already have cameras, don't show a blocking error
+      if (cameras.length === 0) {
+        setError("Failed to load traffic camera data. Please try again later.");
+      }
     } finally {
       setLoading(false);
     }
